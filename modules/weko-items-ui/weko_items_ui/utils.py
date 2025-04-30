@@ -20,6 +20,7 @@
 
 """Module of weko-items-ui utils.."""
 
+import calendar
 import copy
 import csv
 import json
@@ -39,8 +40,10 @@ from redis import sentinel
 from elasticsearch.exceptions import NotFoundError
 from elasticsearch import exceptions as es_exceptions
 from flask import abort, current_app, flash, redirect, request, send_file, \
-    url_for,jsonify
+    url_for,jsonify, Flask
 from flask_babelex import gettext as _
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_login import current_user
 from invenio_accounts.models import Role, userrole
 from invenio_db import db
@@ -69,6 +72,7 @@ from weko_index_tree.utils import check_index_permissions, get_index_id, \
 from weko_records.api import FeedbackMailList, ItemTypes, Mapping
 from weko_records.serializers.utils import get_item_type_name
 from weko_records.utils import replace_fqdn_of_file_metadata
+from weko_records_ui.errors import AvailableFilesNotFoundRESTError
 from weko_records_ui.permissions import check_created_id, \
     check_file_download_permission, check_publish_status
 from weko_redis.redis import RedisConnection
@@ -92,7 +96,7 @@ def get_list_username():
 
     Query database to get all available username
     return: list of username
-    TODO: 
+    TODO:
     """
     current_user_id = current_user.get_id()
     current_app.logger.debug("current_user:{}".format(current_user))
@@ -104,7 +108,7 @@ def get_list_username():
         username = user.get_username
         if username:
             result.append(username)
-    
+
     return result
 
 
@@ -356,7 +360,7 @@ def find_hidden_items(item_id_list, idx_paths=None, check_creator_permission=Fal
     no_permission_index = []
     hidden_list = []
     for record in WekoRecord.get_records(item_id_list):
-        
+
         if check_creator_permission:
             # Check if user is owner of the item
             if check_created_id(record):
@@ -436,7 +440,7 @@ def get_permission_record(rank_type, es_data, display_rank, has_permission_index
                         break
                 add_flag = is_public and has_index_permission
         except PIDDoesNotExistError:
-            # do not add deleted items into ranking list. 
+            # do not add deleted items into ranking list.
             add_flag = False
             current_app.logger.debug("PID {} does not exist.".format(pid_value))
 
@@ -575,7 +579,7 @@ def validate_form_input_data(
 
     :param result: result dictionary.
     :param item_id: item type identifier.
-    :param data: form input data 
+    :param data: form input data
     :param activity_id: activity id
     """
     # current_app.logger.error("result: {}".format(result))
@@ -595,11 +599,11 @@ def validate_form_input_data(
             elif type(given_data) is str:
                 ret = list(given_data)
         return ret
-        
+
 
     # Get langauge key - DONE
-    # Iterate data for validating the value - 
-    # Check each item and raise an error for duplicate langauge value - 
+    # Iterate data for validating the value -
+    # Check each item and raise an error for duplicate langauge value -
 
     item_type = ItemTypes.get_by_id(item_id)
     json_schema = item_type.schema.copy()
@@ -729,13 +733,13 @@ def validate_form_input_data(
     for key in item_type_mapping_keys:
         jpcoar_value: dict = _get_jpcoar_mapping_value_mapping(key, item_type_mapping)
         jpcoar_value_keys_lv1: list = list(jpcoar_value)
-        
+
         for key_lv1 in jpcoar_value_keys_lv1:
             if "title" == key_lv1:
                 title_sub_items: dict = jpcoar_value[key_lv1]
                 title_sub_items_keys: list = list(title_sub_items.keys())
                 mapping_title_item_key: str = key
-                
+
                 for title_sub_item in title_sub_items:
                     if "@attributes" == title_sub_item:
                         mapping_title_language_key: list = title_sub_items.get(title_sub_item, {}).get("xml:lang", "_").split(".")
@@ -744,11 +748,11 @@ def validate_form_input_data(
                 alternative_title_sub_items: dict = jpcoar_value[key_lv1]
                 alternative_title_sub_items_title_sub_items_keys: list = list(alternative_title_sub_items.keys())
                 mapping_alternative_title_item_key: str = key
-                
+
                 for alternative_title_sub_item in alternative_title_sub_items:
                     if "@attributes" == alternative_title_sub_item:
                         mapping_alternative_title_language_key: list = alternative_title_sub_items.get(alternative_title_sub_item, {}).get("xml:lang", "_").split(".")
-                
+
             elif "creator" == key_lv1:
                 mapping_creator_item_key: str = key
                 creator_sub_items: dict = jpcoar_value[key_lv1]
@@ -775,7 +779,7 @@ def validate_form_input_data(
                         mapping_creator_alternative_name_language_key = (
                             creator_sub_items.get(creator_sub_item, {}).get("@attributes", {"xml:lang": "_._"}).get("xml:lang", "_._").split(".")
                         )
-            
+
             elif "contributor" == key_lv1:
                 mapping_contributor_item_key: str = key
                 contributor_sub_items: dict = jpcoar_value[key_lv1]
@@ -834,16 +838,16 @@ def validate_form_input_data(
                     source_title_sub_items: dict = jpcoar_value[key_lv1]
                     source_title_sub_items_keys: list = list(source_title_sub_items.keys())
                     mapping_source_title_item_key: str = key
-                    
+
                     for source_title_sub_item in source_title_sub_items:
                         if "@attributes" == source_title_sub_item:
                             mapping_source_title_language_key: list = source_title_sub_items.get(source_title_sub_item, {}).get("xml:lang", "_").split(".")
-            
+
             elif "degreeName" == key_lv1:
                 degree_name_sub_items: dict = jpcoar_value[key_lv1]
                 degree_name_sub_items_keys: list = list(degree_name_sub_items.keys())
                 mapping_degree_name_item_key: str = key
-                
+
                 for degree_name_sub_item in degree_name_sub_items:
                     if "@attributes" == degree_name_sub_item:
                         mapping_degree_name_language_key: list = degree_name_sub_items.get(degree_name_sub_item, {}).get("xml:lang", "_").split(".")
@@ -884,7 +888,7 @@ def validate_form_input_data(
                         mapping_conference_sponsor_language_key = (
                             conference_sub_items.get(conference_sub_item, {}).get("@attributes", {"xml:lang": "_._"}).get("xml:lang", "_._").split(".")
                         )
-            
+
     """
     For iterating the argument 'data' and validating its language value
     """
@@ -898,13 +902,13 @@ def validate_form_input_data(
         ):
             if language_value_list.count(language_value) > 1:
                 raise ValidationError(f"{item_error_message} -- {duplication_error}")
-        
+
         duplication_error: str = """
             Please ensure that the following applicable items have no duplicate language values:
-            Title, Creator Name ,Creator Family Name, Creator Given Name, Creator Affliation Name, 
-            Contributor Name ,Contributor Family Name, Contributor Given Name, Contributor Affliation Name, 
-            Related Title, Funding Reference Funder Name, Funding Reference Award Title, Source Title, Degree Name, 
-            Degree Grantor Name, Conference Name, Conference Sponsor, Conference Date, Conference Venue, Conference Place, 
+            Title, Creator Name ,Creator Family Name, Creator Given Name, Creator Affliation Name,
+            Contributor Name ,Contributor Family Name, Contributor Given Name, Contributor Affliation Name,
+            Related Title, Funding Reference Funder Name, Funding Reference Award Title, Source Title, Degree Name,
+            Degree Grantor Name, Conference Name, Conference Sponsor, Conference Date, Conference Venue, Conference Place,
             Holding Agent Name, Catalog Title
         """
 
@@ -933,11 +937,11 @@ def validate_form_input_data(
         ):
             if language_value == "ja-Kana" and "ja" not in language_value_list:
                 raise ValidationError(f"{item_error_message} -- {ja_kana_error}")
-        
+
         ja_kana_error: str = """
             If ja-Kana is used, please ensure that the following applicable items have ja language values:
-            Creator Name ,Creator Family Name, Creator Given Name, Creator Alternative Name, 
-            Contributor Name ,Contributor Family Name, Contributor Given Name, Contributor Alternative Name, 
+            Creator Name ,Creator Family Name, Creator Given Name, Creator Alternative Name,
+            Contributor Name ,Contributor Family Name, Contributor Given Name, Contributor Alternative Name,
             Holding Agent Name, Catalog Title.
         """
 
@@ -966,11 +970,11 @@ def validate_form_input_data(
         ):
             if language_value == "ja-Latn" and "ja" not in language_value_list:
                 raise ValidationError(f"{item_error_message} -- {ja_latn_error}")
-        
+
         ja_latn_error: str = """
             If ja-Latn is used, please ensure that the following applicable items have ja language values:
-            Creator Name ,Creator Family Name, Creator Given Name, Creator Alternative Name, 
-            Contributor Name ,Contributor Family Name, Contributor Given Name, Contributor Alternative Name, 
+            Creator Name ,Creator Family Name, Creator Given Name, Creator Alternative Name,
+            Contributor Name ,Contributor Family Name, Contributor Given Name, Contributor Alternative Name,
             Holding Agent Name, Catalog Title.
         """
 
@@ -1004,10 +1008,10 @@ def validate_form_input_data(
 
             if not result:
                 raise ValidationError(f"{item_error_message} -- {date_format_error}")
-        
+
         date_format_error: str = """
-            Please ensure that entered date has the following formats: YYYY, YYYY-MM, YYYY-MM-DD, 
-            YYYY-MM-DDThh:mm+TZD, YYYY-MM-DDThh:mm-TZD, YYYY-MM-DDThh:mm:ss+TZD, YYYY-MM-DDThh:mm:ss-TZD, 
+            Please ensure that entered date has the following formats: YYYY, YYYY-MM, YYYY-MM-DD,
+            YYYY-MM-DDThh:mm+TZD, YYYY-MM-DDThh:mm-TZD, YYYY-MM-DDThh:mm:ss+TZD, YYYY-MM-DDThh:mm:ss-TZD,
             YYYY-MM-DDThh:mm:ss.ss+TZD, YYYY-MM-DDThh:mm:ss.ss-TZD
         """
 
@@ -1089,7 +1093,7 @@ def validate_form_input_data(
                         items_to_be_checked_for_ja_latn.append(data_item_values.get(mapping_key))
                     else:
                         pass
-            
+
             # Validation for ALTERNATIVE TITLE
             validation_ja_kana_error_checker(
                 _("Alternative Title"),
@@ -1165,7 +1169,7 @@ def validate_form_input_data(
                             items_to_be_checked_for_duplication = []
                             items_to_be_checked_for_ja_kana = []
                             items_to_be_checked_for_ja_latn = []
-                        
+
                         # CREATOR AFFLIATION NAMES
                         elif data_creator_item_values_key == mapping_creator_affiliation_name_language_key[0]:
                             creator_affiliations: [dict] = data_creator_item_values.get(mapping_creator_affiliation_name_language_key[0])
@@ -1302,7 +1306,7 @@ def validate_form_input_data(
                             items_to_be_checked_for_duplication = []
                             items_to_be_checked_for_ja_kana = []
                             items_to_be_checked_for_ja_latn = []
-                        
+
                         # CONTRIBUTOR AFFLIATION NAMES
                         elif data_contributor_item_values_key == mapping_contributor_affiliation_name_language_key[0]:
                             contributor_affiliations: [dict] = data_contributor_item_values.get(mapping_contributor_affiliation_name_language_key[0])
@@ -1514,7 +1518,7 @@ def validate_form_input_data(
                                 if mapping_key in keys_that_exist_in_data:
                                     # Append CONFERENCE DATE LANGUAGE value to items_to_be_checked_for_duplication list
                                     items_to_be_checked_for_duplication.append(date_values.get(mapping_key))
-            if isinstance(data_conference_item_values, dict):                                    
+            if isinstance(data_conference_item_values, dict):
                 # Validation for CONFERENCE DATE
                 validation_duplication_error_checker(
                     _("Conference Date"),
@@ -1542,7 +1546,7 @@ def validate_form_input_data(
                             )
                             # Reset validation lists below for the next item to be validated
                             items_to_be_checked_for_duplication = []
-                        
+
                         # CONFERENCE PLACE
                         elif data_conference_item_values_key == mapping_conference_place_language_key[0]:
                             conference_places_values: [dict] = data_conference_item_values.get(mapping_conference_place_language_key[0])
@@ -1604,6 +1608,7 @@ def validate_form_input_data(
     remove_excluded_items_in_json_schema(item_id, json_schema)
 
     data['$schema'] = json_schema.copy()
+
     validation_data = RecordBase(data)
 
     try:
@@ -1914,16 +1919,19 @@ def make_stats_file(item_type_id, recids, list_item_role, export_path=""):
     """
     from weko_records_ui.views import escape_newline, escape_str
 
-    item_type = ItemTypes.get_by_id(item_type_id).render
-    list_hide = get_item_from_option(item_type_id)
+    item_type = ItemTypes.get_by_id(item_type_id)
+    if item_type:
+        list_hide = get_item_from_option(item_type_id, item_type=ItemTypes(item_type.schema, model=item_type))
+    else:
+        list_hide = get_item_from_option(item_type_id)
     no_permission_show_hide = hide_meta_data_for_role(
         list_item_role.get(item_type_id))
-    if no_permission_show_hide and item_type and item_type.get('table_row'):
+    if no_permission_show_hide and item_type and item_type.render.get('table_row'):
         for name_hide in list_hide:
-            item_type['table_row'] = hide_table_row(
-                item_type.get('table_row'), name_hide)
+            item_type.render['table_row'] = hide_table_row(
+                item_type.render.get('table_row'), name_hide)
 
-    table_row_properties = item_type['table_row_map']['schema'].get(
+    table_row_properties = item_type.render['table_row_map']['schema'].get(
         'properties')
 
     class RecordsManager:
@@ -2128,10 +2136,11 @@ def make_stats_file(item_type_id, recids, list_item_role, export_path=""):
                             str(idx)))
                         key_label.insert(0, '.ファイルパス[{}]'.format(
                             str(idx)))
-                        file_path = ""
+                        output_path = ""
                         if key_data[key_index]:
                             file_path = "recid_{}/{}".format(str(self.cur_recid), key_data[key_index])
-                        key_data.insert(0,file_path)
+                            output_path = file_path if os.path.exists(os.path.join(export_path,file_path)) else ""
+                        key_data.insert(0,output_path)
                         break
                     elif 'thumbnail_label' in key_list[key_index] \
                             and len(item_key_split) == 2:
@@ -2239,7 +2248,7 @@ def make_stats_file(item_type_id, recids, list_item_role, export_path=""):
             pubdate = record.get('pubdate', {}).get('attribute_value', '')
             records.attr_output[recid].append(pubdate)
 
-    for item_key in item_type.get('table_row'):
+    for item_key in item_type.render.get('table_row'):
         item = table_row_properties.get(item_key)
         records.get_max_ins(item_key)
         keys = []
@@ -2275,7 +2284,7 @@ def make_stats_file(item_type_id, recids, list_item_role, export_path=""):
                 if not keys:
                     keys = [item_key]
                 if not labels:
-                    labels = [item.get('title')]                
+                    labels = [item.get('title')]
                 data = records.attr_data[item_key].get(recid) or {}
                 attr_val = data.get("attribute_value", "")
                 if isinstance(attr_val,str):
@@ -2295,9 +2304,9 @@ def make_stats_file(item_type_id, recids, list_item_role, export_path=""):
     ret_option = []
     multiple_option = ['.metadata.path', '.pos_index',
                        '.feedback_mail', '.file_path', '.thumbnail_path']
-    meta_list = item_type.get('meta_list', {})
-    meta_list.update(item_type.get('meta_fix', {}))
-    form = item_type.get('table_row_map', {}).get('form', {})
+    meta_list = item_type.render.get('meta_list', {})
+    meta_list.update(item_type.render.get('meta_fix', {}))
+    form = item_type.render.get('table_row_map', {}).get('form', {})
     del_num = 0
     total_col = len(ret)
     for index in range(total_col):
@@ -2395,7 +2404,7 @@ def write_bibtex_files(item_types_data, export_path):
     """
     # current_app.logger.error("item_types_data:{}".format(item_types_data))
     # current_app.logger.error("export_path:{}".format(export_path))
-    
+
     for item_type_id in item_types_data:
         item_type_data = item_types_data[item_type_id]
         output = make_bibtex_data(item_type_data['recids'])
@@ -2421,7 +2430,7 @@ def write_files(item_types_data, export_path, list_item_role):
     file_format = current_app.config.get('WEKO_ADMIN_OUTPUT_FORMAT', 'tsv').lower()
 
     for item_type_id in item_types_data:
-        
+
         current_app.logger.debug("item_type_id:{}".format(item_type_id))
         current_app.logger.debug("item_types_data[item_type_id]['recids']:{}".format(item_types_data[item_type_id]['recids']))
         headers, records = make_stats_file(
@@ -2616,8 +2625,11 @@ def _export_item(record_id,
         if not records_data:
             records_data = record
         if exported_item['item_type_id']:
-            list_hidden = get_ignore_item_from_mapping(
-                exported_item['item_type_id'])
+            item_type_id = exported_item['item_type_id']
+            list_hidden = []
+            item_type = ItemTypes.get_by_id(item_type_id)
+            if item_type:
+                list_hidden = get_ignore_item_from_mapping(item_type_id, item_type)
             if records_data.get('metadata'):
                 meta_data = records_data.get('metadata')
                 _custom_export_metadata(meta_data.get('_item_metadata', {}),
@@ -2768,7 +2780,7 @@ def to_files_js(record):
     Returns:
         _type_: _description_
     """
-    current_app.logger.debug("type: {}".format(type(record))) 
+    current_app.logger.debug("type: {}".format(type(record)))
     res = []
     files = record.files or []
     files_content_dict = {}
@@ -2781,7 +2793,7 @@ def to_files_js(record):
     # Get files form meta_data, so that you can append any extra info to files
     # (which not contained by file_bucket) such as license below
     files_from_meta = get_files_from_metadata(record)
-    
+
     # get file with order similar metadata
     files_content = []
     for _k, f in files_from_meta.items():
@@ -3146,15 +3158,17 @@ def hide_meta_data_for_role(record):
     return is_hidden
 
 
-def get_ignore_item_from_mapping(_item_type_id):
+def get_ignore_item_from_mapping(_item_type_id, item_type):
     """Get ignore item from mapping.
 
     :param _item_type_id:
+    :param item_type:
     :return ignore_list:
     """
     ignore_list = []
-    meta_options, item_type_mapping = get_options_and_order_list(_item_type_id)
-    sub_ids = get_hide_list_by_schema_form(item_type_id=_item_type_id)
+    meta_options, item_type_mapping = get_options_and_order_list(
+        _item_type_id, item_type_data=ItemTypes(item_type.schema, model=item_type))
+    sub_ids = get_hide_list_by_schema_form(item_type=item_type)
     for key, val in meta_options.items():
         hidden = val.get('option').get('hidden')
         if hidden:
@@ -3233,7 +3247,7 @@ def del_hide_sub_item(key, mlt, hide_list):
             elif isinstance(v, str):
                 for h in hide_list:
                     if h.startswith(key) and h.endswith(k) and k in mlt:
-                        mlt.pop(k) 
+                        mlt.pop(k)
             else:
                 pass
     elif isinstance(mlt, list):
@@ -3242,12 +3256,11 @@ def del_hide_sub_item(key, mlt, hide_list):
     else:
         pass
 
-def get_hide_list_by_schema_form(item_type_id=None, schemaform=None):
+def get_hide_list_by_schema_form(item_type=None, schemaform=None):
     """Get hide list by schema form."""
     ids = []
-    if item_type_id and not schemaform:
-        item_type = ItemTypes.get_by_id(item_type_id).render
-        schemaform = item_type.get('table_row_map', {}).get('form', {})
+    if item_type and not schemaform:
+        schemaform = item_type.render.get('table_row_map', {}).get('form', {})
     if schemaform:
         for item in schemaform:
             if not item.get('items'):
@@ -3258,16 +3271,15 @@ def get_hide_list_by_schema_form(item_type_id=None, schemaform=None):
     return ids
 
 
-def get_hide_parent_keys(item_type_id=None, meta_list=None):
+def get_hide_parent_keys(item_type=None, meta_list=None):
     """Get all hide parent keys.
 
-    :param item_type_id:
+    :param item_type:
     :param meta_list:
     :return: hide parent keys
     """
-    if item_type_id and not meta_list:
-        item_type = ItemTypes.get_by_id(item_type_id).render
-        meta_list = item_type.get('meta_list', {})
+    if item_type and not meta_list:
+        meta_list = item_type.render.get('meta_list', {})
     hide_parent_keys = []
     for key, val in meta_list.items():
         hidden = val.get('option', {}).get('hidden')
@@ -3283,18 +3295,18 @@ def get_hide_parent_and_sub_keys(item_type):
     """
     # Get parent keys of 'Hide' items.
     meta_list = item_type.render.get('meta_list', {})
-    hide_parent_key = get_hide_parent_keys(item_type.id, meta_list)
+    hide_parent_key = get_hide_parent_keys(item_type, meta_list)
     # Get sub keys of 'Hide' items.
     forms = item_type.render.get('table_row_map', {}).get('form', {})
-    hide_sub_keys = get_hide_list_by_schema_form(item_type.id, forms)
+    hide_sub_keys = get_hide_list_by_schema_form(item_type, forms)
     hide_sub_keys = [prop.replace('[]', '') for prop in hide_sub_keys]
     return hide_parent_key, hide_sub_keys
 
 
-def get_item_from_option(_item_type_id):
+def get_item_from_option(_item_type_id, item_type=None):
     """Get all keys of properties that is set Hide option on metadata."""
     ignore_list = []
-    meta_options = get_options_list(_item_type_id)
+    meta_options = get_options_list(_item_type_id, json_item=item_type)
     for key, val in meta_options.items():
         hidden = val.get('option').get('hidden')
         if hidden:
@@ -3309,15 +3321,17 @@ def get_options_list(item_type_id, json_item=None):
     :param json_item:
     :return: options dict
     """
+    meta_options = {}
     if json_item is None:
         json_item = ItemTypes.get_record(item_type_id)
-    meta_options = json_item.model.render.get('meta_fix')
-    meta_options.update(json_item.model.render.get('meta_list'))
+    if json_item:
+        meta_options = json_item.model.render.get('meta_fix')
+        meta_options.update(json_item.model.render.get('meta_list'))
     return meta_options
 
 
 def get_options_and_order_list(item_type_id, item_type_mapping=None,
-                               item_type_data=None):
+                               item_type_data=None, mapping_flag=True):
     """Get Options by item type id.
 
     :param item_type_id:
@@ -3330,9 +3344,13 @@ def get_options_and_order_list(item_type_id, item_type_mapping=None,
     item_type_mapping = None
     if item_type_id:
         meta_options = get_options_list(item_type_id, item_type_data)
-        if item_type_mapping is None:
+        if item_type_mapping is None and mapping_flag:
             item_type_mapping = Mapping.get_record(item_type_id)
-    return meta_options, item_type_mapping
+
+    if mapping_flag:
+        return meta_options, item_type_mapping
+    else:
+        return meta_options
 
 
 def hide_table_row(table_row, hide_key):
@@ -3406,7 +3424,7 @@ def translate_validation_message(item_property, cur_lang):
     """
     # current_app.logger.error("item_property:{}".format(item_property))
     # current_app.logger.error("cur_lang:{}".format(cur_lang))
-    
+
     items_attr = 'items'
     properties_attr = 'properties'
     if isExistKeyInDict(items_attr, item_property):
@@ -3551,7 +3569,7 @@ def get_ranking(settings):
     :param settings: ranking setting.
     :return:
     """
-    
+
     def _get_index_info(index_json, index_info):
         for index in index_json:
             index_info[index["id"]] = {
@@ -3605,7 +3623,7 @@ def get_ranking(settings):
 
         current_app.logger.debug("finished getting most_downloaded_items data from ES")
         rankings['most_downloaded_items'] = get_permission_record('most_downloaded_items', result, settings.display_rank, has_permission_indexes)
-    
+
     # created_most_items_user
     current_app.logger.debug("get created_most_items_user start")
     if settings.rankings['created_most_items_user']:
@@ -3675,10 +3693,10 @@ def get_ranking(settings):
             agg_size=settings.display_rank + rank_buffer,
             must_not=json.dumps([{"wildcard": {"control_number": "*.*"}}])
         )
-        
+
         current_app.logger.debug("finished getting new_items data from ES")
         rankings['new_items'] = get_permission_record('new_items', result, settings.display_rank, has_permission_indexes)
-        
+
     return rankings
 
 
@@ -3704,7 +3722,7 @@ def sanitize_input_data(data):
 
     Args:
         data (dict or list): target dict or list
-    """    
+    """
     if isinstance(data, dict):
         for k, v in data.items():
             if isinstance(v, str):
@@ -3831,24 +3849,22 @@ def hide_thumbnail(schema_form):
             break
 
 
-def get_ignore_item(_item_type_id, item_type_mapping=None,
-                    item_type_data=None):
+def get_ignore_item(_item_type_id, item_type_data=None):
     """Get ignore item from mapping.
 
     :param _item_type_id:
-    :param item_type_mapping:
     :param item_type_data:
     :return ignore_list:
     """
     ignore_list = []
-    meta_options, _ = get_options_and_order_list(
-        _item_type_id, item_type_mapping, item_type_data)
+    sub_ids = []
+    meta_options = get_options_and_order_list(
+        _item_type_id, item_type_data=item_type_data, mapping_flag=False)
     schema_form = None
     if item_type_data is not None:
         schema_form = item_type_data.model.render.get("table_row_map", {}).get(
             'form')
-    sub_ids = get_hide_list_by_schema_form(
-        item_type_id=_item_type_id, schemaform=schema_form)
+        sub_ids = get_hide_list_by_schema_form(schemaform=schema_form)
     for key, val in meta_options.items():
         hidden = val.get('option').get('hidden')
         if hidden:
@@ -3872,12 +3888,12 @@ def make_stats_file_with_permission(item_type_id, recids,
 
     Returns:
         _type_: _description_
-    """                                   
+    """
     """
 
     Arguments:
-        item_type_id    -- 
-        recids          -- 
+        item_type_id    --
+        recids          --
     Returns:
         ret             -- Key properties
         ret_label       -- Label properties
@@ -4138,10 +4154,11 @@ def make_stats_file_with_permission(item_type_id, recids,
                             str(idx)))
                         key_label.insert(0, '.ファイルパス[{}]'.format(
                             str(idx)))
-                        file_path = ""
+                        output_path = ""
                         if key_data[key_index]:
                             file_path = "recid_{}/{}".format(str(self.cur_recid), key_data[key_index])
-                        key_data.insert(0,file_path)
+                            output_path = file_path if os.path.exists(os.path.join(export_path,file_path)) else ""
+                        key_data.insert(0,output_path)
                         break
                     elif 'thumbnail_label' in key_list[key_index] \
                             and len(item_key_split) == 2:
@@ -4416,7 +4433,7 @@ def check_item_is_deleted(recid):
 
     Returns:
         bool: True: deleted, False: available
-    """    
+    """
     pid = PersistentIdentifier.query.filter_by(
         pid_type='recid', pid_value=recid).first()
     if not pid:
@@ -4435,7 +4452,7 @@ def permission_ranking(result, pid_value_permissions, display_rank, list_name,
         display_rank (_type_): _description_
         list_name (_type_): _description_
         pid_value (_type_): _description_
-    """                       
+    """
     list_result = list()
     for data in result.get(list_name, []):
         if data.get(pid_value, '') in pid_value_permissions:
@@ -4459,3 +4476,92 @@ def has_permission_edit_item(record, recid):
     ).first()
     can_edit = True if pid == get_record_without_version(pid) else False
     return can_edit and permission
+
+
+def create_limiter():
+    from .config import WEKO_ITEMS_UI_API_LIMIT_RATE_DEFAULT
+    return Limiter(app=Flask(__name__), key_func=get_remote_address, default_limits=WEKO_ITEMS_UI_API_LIMIT_RATE_DEFAULT)
+
+def get_file_download_data(item_id, record, filenames, query_date=None, size=None):
+    """Get file download data.
+
+    Args:
+        item_id (int): Item id
+        record (WekoRecord): Record
+        filenames (list[str]): Filenames
+        query_date (str): Period(yyyy-MM)
+        size (str): Ranking display number
+
+    Returns:
+        dict: Ranking result dict
+    """
+    result = {}
+
+    # Check available
+    available_filenames = []
+    target_files = [f for f in record.files if f.info().get('filename') in filenames]
+
+    for file in target_files:
+        if check_file_download_permission(record, file.info()):
+            available_filenames.append(file.info().get('filename'))
+    if not available_filenames:
+        raise AvailableFilesNotFoundRESTError()
+
+    result['ranking'] = [{'filename': f, 'download_total': 0} for f in available_filenames]
+
+    # Get root file ids
+    from invenio_files_rest.models import ObjectVersion
+    root_file_id_list = []
+    bucket_id = record.get('_buckets', {}).get('deposit')
+
+    for filename in available_filenames:
+        obv = ObjectVersion.get(bucket_id, filename)
+        root_file_id_list.append(str(obv.root_file_id) if obv else '')
+
+    # Set parameter
+    params = {
+        'item_id': str(item_id),
+        'root_file_id_list': root_file_id_list,
+    }
+
+    if query_date:
+        year = int(query_date[0: 4])
+        month = int(query_date[5: 7])
+        _, lastday = calendar.monthrange(year, month)
+        params.update({
+            'start_date': f'{query_date}-01',
+            'end_date': f'{query_date}-{str(lastday).zfill(2)}T23:59:59'
+        })
+
+    try:
+        try:
+            from invenio_stats.proxies import current_stats
+            # file download query
+            query_download_total_cfg = current_stats.queries['item-file-download-aggs']
+            query_download_total = query_download_total_cfg.query_class(**query_download_total_cfg.query_config)
+            res_download_total = query_download_total.run(**params)
+        except Exception as e:
+            current_app.logger.error(traceback.print_exc())
+            res_download_total = {'download_ranking': {'buckets': []}}
+
+        for b in res_download_total.get('download_ranking', {}).get('buckets'):
+            for r in result['ranking']:
+                if r.get('filename') == b.get('key'):
+                    r['download_total'] = b.get('doc_count')
+                    break
+
+        # Sort
+        result['ranking'].sort(key=lambda x:x['download_total'], reverse=True)
+        if size:
+            result['ranking'] = result['ranking'][:int(size)]
+
+    except Exception as e:
+        current_app.logger.error(traceback.print_exc())
+        current_app.logger.debug(e)
+
+    if query_date:
+        result['period'] = query_date
+    else:
+        result['period'] = 'total'
+
+    return result
